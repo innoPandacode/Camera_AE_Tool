@@ -64,14 +64,14 @@ def process_images(folder, text_box):
                   f"Size: {width}x{height}\n"
                   f"Region Size: {region_width}x{region_height}\n"
                   f"Brightness Avg.: {brightness:.2f}\n"
-                  f"Color Avg.: {mean_color.astype(int)}", fontsize=12)
+                  f"Color Avg.(RGB): {mean_color.astype(int)}", fontsize=12)
 
         # 將圖片信息添加到文字框中
         text_box.insert('end', f"{os.path.basename(image_file)}\n"
                               f"Size: {width}x{height}\n"
                               f"Region Size: {region_width}x{region_height}\n"
                               f"Brightness Avg.: {brightness:.2f}\n"
-                              f"Color Avg.: {mean_color.astype(int)}\n"
+                              f"Color Avg.(RGB): {mean_color.astype(int)}\n"
                               f"----------------------------\n\n")
     
     pad = max(3.0 - 0.1 * num_rows, 0.3)
