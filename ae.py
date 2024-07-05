@@ -3,7 +3,8 @@ from tkinter import Tk, filedialog, Button, Label, Text, Scrollbar
 from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
-# v1.0_20240704
+
+# v1.1_20240705
 
 # 提取矩陣大小相關的變數
 MATRIX_DIVISOR = 3
@@ -46,12 +47,15 @@ def process_images(folder, text_box):
     num_rows = (num_images + IMAGES_PER_ROW - 1) // IMAGES_PER_ROW
     plt.figure(figsize=(10, 8))
     
+    brightness_list = []
+    
     for idx, (image_file, image) in enumerate(zip(image_files, images)):
         row = idx // IMAGES_PER_ROW
         col = idx % IMAGES_PER_ROW
         
         central_region = image.crop((x_start, y_start, x_start + region_width, y_start + region_height))
         brightness, mean_color = calculate_mean_brightness_and_color(central_region)
+        brightness_list.append(brightness)
         
         plt.subplot(num_rows, IMAGES_PER_ROW, idx + 1)
         plt.imshow(image)
@@ -73,7 +77,18 @@ def process_images(folder, text_box):
                               f"Brightness Avg.: {brightness:.2f}\n"
                               f"Color Avg.(RGB): {mean_color.astype(int)}\n"
                               f"----------------------------\n\n")
-    
+
+    # 计算总平均亮度及其范围
+    ae_brightness_avg = np.mean(brightness_list)
+    ae_range = [ae_brightness_avg - 0.3, ae_brightness_avg + 0.3]
+    ae_result = all(ae_range[0] <= b <= ae_range[1] for b in brightness_list)
+
+    # 将总平均亮度及其范围和结果添加到文字框中
+    text_box.insert('end', "----------------------------\n\n")
+    text_box.insert('end', f"AE Brightness Avg.: {ae_brightness_avg:.2f}\n")
+    text_box.insert('end', f"AE Range: [{ae_range[0]:.2f}, {ae_range[1]:.2f}]\n")
+    text_box.insert('end', f"AE Result: {'PASS' if ae_result else 'FAIL'}\n")
+
     pad = max(3.0 - 0.1 * num_rows, 0.3)
     plt.tight_layout(pad=pad, h_pad=1.0, w_pad=1.0)
     plt.gcf().canvas.manager.set_window_title("Image AE Results")
