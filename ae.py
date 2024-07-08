@@ -4,7 +4,7 @@ from PIL import Image
 import numpy as np
 import matplotlib.pyplot as plt
 
-# v1.1_20240705
+# version : 20240708_v1.2
 
 # 提取矩陣大小相關的變數
 MATRIX_DIVISOR = 3
@@ -14,7 +14,7 @@ IMAGES_PER_ROW = 3
 
 def get_image_files(folder):
     """從指定資料夾中獲取所有圖片檔案的路徑列表。"""
-    return [os.path.join(folder, file) for file in os.listdir(folder) if file.endswith(('jpg', 'jpeg', 'png', 'bmp', 'tiff'))]
+    return [os.path.join(folder, file) for file in os.listdir(folder) if file.lower().endswith(('jpg', 'jpeg', 'png', 'bmp', 'tiff'))]
 
 def calculate_mean_brightness_and_color(image):
     """計算給定圖片的平均亮度和色彩。"""
@@ -27,7 +27,6 @@ def calculate_mean_brightness_and_color(image):
 
 def process_images(folder, text_box):
     """處理指定資料夾中的所有圖片。"""
-    # 设置全局字体为宋体
     plt.rcParams['font.family'] = 'SimSun'
 
     image_files = get_image_files(folder)
@@ -63,14 +62,12 @@ def process_images(folder, text_box):
         plt.ylim([height, 0])
         plt.gca().add_patch(plt.Rectangle((x_start, y_start), region_width, region_height, edgecolor='red', facecolor='none', lw=2))
         
-        # 顯示原始圖片及其中心框選區域的信息
         plt.title(f"{os.path.basename(image_file)}\n"
                   f"Size: {width}x{height}\n"
                   f"Region Size: {region_width}x{region_height}\n"
                   f"Brightness Avg.: {brightness:.2f}\n"
                   f"Color Avg.(RGB): {mean_color.astype(int)}", fontsize=12)
 
-        # 將圖片信息添加到文字框中
         text_box.insert('end', f"{os.path.basename(image_file)}\n"
                               f"Size: {width}x{height}\n"
                               f"Region Size: {region_width}x{region_height}\n"
@@ -78,12 +75,10 @@ def process_images(folder, text_box):
                               f"Color Avg.(RGB): {mean_color.astype(int)}\n"
                               f"----------------------------\n\n")
 
-    # 计算总平均亮度及其范围
     ae_brightness_avg = np.mean(brightness_list)
     ae_range = [ae_brightness_avg - 0.3, ae_brightness_avg + 0.3]
     ae_result = all(ae_range[0] <= b <= ae_range[1] for b in brightness_list)
 
-    # 将总平均亮度及其范围和结果添加到文字框中
     text_box.insert('end', "----------------------------\n\n")
     text_box.insert('end', f"AE Brightness Avg.: {ae_brightness_avg:.2f}\n")
     text_box.insert('end', f"AE Range: [{ae_range[0]:.2f}, {ae_range[1]:.2f}]\n")
@@ -93,52 +88,69 @@ def process_images(folder, text_box):
     plt.tight_layout(pad=pad, h_pad=1.0, w_pad=1.0)
     plt.gcf().canvas.manager.set_window_title("Image AE Results")
     plt.show()
+    
+    return True  # 成功處理圖片
 
 def select_folder():
     """選擇資料夾並處理其中的圖片。"""
     folder_path = filedialog.askdirectory()
     if folder_path:
         try:
+            if error_label.winfo_exists():
+                error_label.config(text="")  # 清除錯誤訊息
             show_image_details(folder_path)
-            error_label.config(text="")  # 清除錯誤訊息
         except ValueError as e:
-            error_label.config(text=str(e))
+            try:
+                if error_label.winfo_exists():
+                    error_label.config(text=str(e))
+            except:
+                pass
         except Exception as e:
-            error_label.config(text="Error processing images")
+            try:
+                if error_label.winfo_exists():
+                    error_label.config(text="Error processing images")
+            except:
+                pass
     else:
-        error_label.config(text="No folder selected")
+        try:
+            if error_label.winfo_exists():
+                error_label.config(text="No folder selected")
+        except:
+            pass
 
 def show_image_details(folder):
     """顯示圖片詳細信息並處理指定資料夾中的所有圖片。"""
-    # 創建新的窗口來顯示圖片詳細信息
-    details_window = Tk()
-    details_window.title("Image Details")
-    details_window.geometry("600x500")
+    try:
+        details_window = Tk()
+        details_window.title("Image Details")
+        details_window.geometry("600x500")
 
-    # 創建文字框和捲動條
-    text_box = Text(details_window, wrap='word', height=30, width=80)
-    text_box.pack(padx=10, pady=10, fill='both', expand=True)
+        text_box = Text(details_window, wrap='word', height=30, width=80)
+        text_box.pack(padx=10, pady=10, fill='both', expand=True)
 
-    scrollbar = Scrollbar(details_window, orient='vertical', command=text_box.yview)
-    scrollbar.pack(side='right', fill='y')
+        scrollbar = Scrollbar(details_window, orient='vertical', command=text_box.yview)
+        scrollbar.pack(side='right', fill='y')
 
-    text_box.config(yscrollcommand=scrollbar.set)
+        text_box.config(yscrollcommand=scrollbar.set)
 
-    # 處理圖片並將信息添加到文字框中
-    process_images(folder, text_box)
+        success = process_images(folder, text_box)
 
-    details_window.mainloop()
+        details_window.mainloop()
 
-# 創建主窗口
+        if success and error_label.winfo_exists():
+            error_label.config(text="")  # 清除錯誤訊息
+    except Exception as e:
+        if error_label.winfo_exists():
+            error_label.config(text=str(e))
+
+
 root = Tk()
 root.title("Image AE Tool")
 root.geometry("300x130")
 
-# 創建和放置小部件
 Label(root, text="Select a folder to calculate AE:").pack(pady=10)
 Button(root, text="Select", command=select_folder).pack(pady=10)
 error_label = Label(root, text="", fg="red")
 error_label.pack(pady=10)
 
-# 啟動 GUI 事件循環
 root.mainloop()
