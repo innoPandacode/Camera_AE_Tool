@@ -2,11 +2,13 @@ import os
 from tkinter import Tk, filedialog, Button, Label, Text, Scrollbar
 from PIL import Image
 import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import time
 
 # 版本名稱
-VERSION_NAME = "v1.3_20240814"
+VERSION_NAME = "v1.4_20241115"
 
 # 提取矩陣大小相關的變數
 MATRIX_DIVISOR = 3
@@ -16,7 +18,7 @@ IMAGES_PER_ROW = 3
 
 def get_image_files(folder):
     """從指定資料夾中獲取所有圖片檔案的路徑列表。"""
-    return [os.path.join(folder, file) for file in os.listdir(folder) if file.endswith(('jpg', 'jpeg', 'png', 'bmp', 'tiff'))]
+    return [os.path.join(folder, file) for file in os.listdir(folder) if file.endswith(('jpg','JPG', 'jpeg', 'png', 'bmp', 'tiff'))]
 
 def calculate_mean_brightness_and_color(image):
     """計算給定圖片的平均亮度和色彩。"""
@@ -32,15 +34,38 @@ def process_images(folder, text_box, log_file=None):
     plt.rcParams['font.family'] = 'SimSun'
 
     image_files = get_image_files(folder)
-    images = [Image.open(image_file) for image_file in image_files]
+    if not image_files:
+        raise ValueError("No image files found in the selected folder.")
 
-    frame_sizes = [image.size for image in images]
+    # 嘗試開啟每張圖片，並檢查是否成功
+    images = []
+    frame_sizes = []
+    for image_file in image_files:
+        try:
+            image = Image.open(image_file)
+            images.append(image)
+            frame_sizes.append(image.size)
+        except Exception as e:
+            print(f"Error loading image {image_file}: {e}")
+            frame_sizes.append(None)
+
+    # 檢查是否存在無效圖片
+    if None in frame_sizes:
+        raise ValueError("Some images failed to load or have invalid sizes.")
+
+    # 單張圖片的處理
+    if len(frame_sizes) == 1:
+        print(f"Single image detected with size: {frame_sizes[0]}")
+
+    # 確認所有圖片的尺寸是否一致
     if len(set(frame_sizes)) != 1:
-        raise ValueError("Not all images have the same frame size")
+        mismatch_info = "\n".join([f"{os.path.basename(image_files[i])}: {size}" for i, size in enumerate(frame_sizes)])
+        raise ValueError(f"Not all images have the same frame size:\n{mismatch_info}")
     
     width, height = frame_sizes[0]
-    region_width = width // MATRIX_DIVISOR
-    region_height = height // MATRIX_DIVISOR
+    # 計算裁剪區域大小，進行四捨五入
+    region_width = round(width / MATRIX_DIVISOR)
+    region_height = round(height / MATRIX_DIVISOR)
     x_start = (width - region_width) // 2
     y_start = (height - region_height) // 2
 
@@ -141,9 +166,9 @@ def process_images(folder, text_box, log_file=None):
     return screenshot_path
 
 def save_screenshot(folder):
-    """保存結果視窗的截圖到指定資料夾的result/AE資料夾中。"""
+    """保存結果視窗的截圖到指定資料夾的Result/AE資料夾中。"""
     # 創建目標資料夾
-    result_folder = os.path.join(folder, "result", "AE")
+    result_folder = os.path.join(folder, "Result", "AE")
     os.makedirs(result_folder, exist_ok=True)
     
     # 生成截圖文件名，前綴加上日期
@@ -180,7 +205,7 @@ def show_image_details(folder):
     """顯示圖片詳細信息並處理指定資料夾中的所有圖片。"""
     try:
         # 創建 result/AE 資料夾並創建 log 文件名
-        result_folder = os.path.join(folder, "result", "AE")
+        result_folder = os.path.join(folder, "Result", "AE")
         os.makedirs(result_folder, exist_ok=True)
         
         date_prefix = time.strftime("%Y%m%d_%H%M%S")
