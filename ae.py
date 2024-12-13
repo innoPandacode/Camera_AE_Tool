@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import time
 
 # 版本名稱
-VERSION_NAME = "v1.4_20241115"
+VERSION_NAME = "v1.5_20241213"
 
 # 提取矩陣大小相關的變數
 MATRIX_DIVISOR = 3
@@ -168,7 +168,7 @@ def process_images(folder, text_box, log_file=None):
 def save_screenshot(folder):
     """保存結果視窗的截圖到指定資料夾的Result/AE資料夾中。"""
     # 創建目標資料夾
-    result_folder = os.path.join(folder, "Result", "AE")
+    result_folder = os.path.join(folder, "Results", "AE")
     os.makedirs(result_folder, exist_ok=True)
     
     # 生成截圖文件名，前綴加上日期
@@ -205,7 +205,7 @@ def show_image_details(folder):
     """顯示圖片詳細信息並處理指定資料夾中的所有圖片。"""
     try:
         # 創建 result/AE 資料夾並創建 log 文件名
-        result_folder = os.path.join(folder, "Result", "AE")
+        result_folder = os.path.join(folder, "Results", "AE")
         os.makedirs(result_folder, exist_ok=True)
         
         date_prefix = time.strftime("%Y%m%d_%H%M%S")
