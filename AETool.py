@@ -3,31 +3,63 @@ import os
 import sys
 import numpy as np
 import customtkinter as ctk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 import pyperclip
 from PIL import Image, ImageDraw, ImageFont
 import re
 from datetime import datetime
+import ctypes
+
+# --- Windows 高解析度 DPI 喚醒 (防止 4K 模糊或過小) ---
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)
+except Exception:
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 # --- UI 風格設定 ---
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
 def resource_path(relative_path):
-    """ 取得資源絕對路徑，相容 PyInstaller 打包後的環境 """
     try:
-        # PyInstaller 建立的臨時資料夾路徑存放在 _MEIPASS 中
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
 def natural_sort_key(s):
-    """ 自然排序：確保 lv1, lv2... lv11 順序正確 """
     return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
 
+# --- 自定義縮放彈窗 ---
+class CTkMessage(ctk.CTkToplevel):
+    def __init__(self, parent, title, message):
+        super().__init__(parent)
+        sw = self.winfo_screenwidth()
+        w = int(sw * 0.2) if sw > 1920 else 400
+        h = int(w * 0.5)
+        
+        self.title(title)
+        self.geometry(f"{w}x{h}")
+        self.attributes("-topmost", True)
+        self.grab_set()
+        
+        px = parent.winfo_x() + (parent.winfo_width() // 2) - (w // 2)
+        py = parent.winfo_y() + (parent.winfo_height() // 2) - (h // 2)
+        self.geometry(f"+{px}+{py}")
+
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.label = ctk.CTkLabel(self, text=message, font=ctk.CTkFont(size=14), wraplength=w-40)
+        self.label.grid(row=0, column=0, padx=20, pady=20)
+
+        self.btn = ctk.CTkButton(self, text="確定", command=self.destroy, width=100)
+        self.btn.grid(row=1, column=0, pady=(0, 20))
+
 class AEPhotoDetail:
-    """ 處理單張照片數據與影像處理 """
     def __init__(self, path):
         self.path = path
         self.filename = os.path.basename(path)
@@ -63,17 +95,28 @@ class ModernAEValidator(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("DQE AE Tool")
-        self.geometry("1300x640")
-        self.version = "v2.0_20260317"
+        self.version = "DQE_20260317"
+        
+        # --- 視窗佔比縮小優化 (寬 60%, 高 65%) ---
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        width = int(sw * 0.6)
+        height = int(sh * 0.65)
+        self.minsize(1024, 720)
+        
+        x = (sw // 2) - (width // 2)
+        y = (sh // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+        
         self.results_cache = [] 
+        self.global_max_diff = 0.0
+        self.global_max_lv_list = [] # 改為 List 存儲多個 Level
 
-        # --- 設定 Icon ---
         icon_path = resource_path("exposure.ico")
         try:
             if os.path.exists(icon_path):
                 self.iconbitmap(icon_path)
-        except Exception as e:
-            print(f"Icon loading failed: {e}")
+        except: pass
 
         self.setup_ui()
 
@@ -81,22 +124,22 @@ class ModernAEValidator(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        # --- 左側側邊欄 ---
         self.sidebar = ctk.CTkFrame(self, width=240, corner_radius=0)
         self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_propagate(False)
         
         ctk.CTkLabel(self.sidebar, text="DQE AE Tool", font=ctk.CTkFont(size=24, weight="bold")).pack(pady=30)
-        
         ctk.CTkButton(self.sidebar, text="📂 選擇主資料夾", command=self.start_analysis, height=40).pack(pady=10, padx=20)
-        
         self.btn_copy = ctk.CTkButton(self.sidebar, text="📋 複製 Excel 數據", command=self.copy_to_clipboard, state="disabled", height=40)
         self.btn_copy.pack(pady=10, padx=20)
-
         self.btn_clear = ctk.CTkButton(self.sidebar, text="🗑 清空結果", command=self.clear_results, fg_color="#A93226", hover_color="#CB4335", height=40)
         self.btn_clear.pack(pady=10, padx=20)
 
         self.status_lbl = ctk.CTkLabel(self.sidebar, text="Ready", font=ctk.CTkFont(size=20, weight="bold"), text_color="#ABB2B9")
-        self.status_lbl.pack(pady=30)
+        self.status_lbl.pack(pady=(30, 5))
+
+        self.max_stat_lbl = ctk.CTkLabel(self.sidebar, text="", font=ctk.CTkFont(size=14), text_color="#E67E22", wraplength=220)
+        self.max_stat_lbl.pack(pady=5)
 
         self.ver_lbl = ctk.CTkLabel(self.sidebar, text=f"Version: {self.version}", font=ctk.CTkFont(size=11), text_color="#566573")
         self.ver_lbl.pack(side="bottom", pady=15)
@@ -104,69 +147,82 @@ class ModernAEValidator(ctk.CTk):
         self.info_box = ctk.CTkLabel(self.sidebar, text="判定規範：\nDiff > 5% 為 Fail\nDiff <= 5% 為 Pass", font=ctk.CTkFont(size=12), justify="left")
         self.info_box.pack(side="bottom", pady=10)
 
-        # --- 右側顯示區 ---
         self.scroll_frame = ctk.CTkScrollableFrame(self, label_text="AE 數據分析報告")
         self.scroll_frame.grid(row=0, column=1, padx=20, pady=20, sticky="nsew")
 
+        def _on_mousewheel(event):
+            self.scroll_frame._parent_canvas.yview_scroll(int(-1 * (event.delta / 120) * 120), "units")
+        self.scroll_frame._parent_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
     def clear_results(self):
-        for widget in self.scroll_frame.winfo_children():
-            widget.destroy()
+        for widget in self.scroll_frame.winfo_children(): widget.destroy()
         self.results_cache = []
+        self.global_max_diff = 0.0
+        self.global_max_lv_list = []
         self.status_lbl.configure(text="Ready", text_color="#ABB2B9")
+        self.max_stat_lbl.configure(text="")
         self.btn_copy.configure(state="disabled", fg_color="gray")
-        messagebox.showinfo("清空", "所有結果已清除。")
+        CTkMessage(self, "清空", "所有結果已清除。")
 
     def start_analysis(self):
         main_path = filedialog.askdirectory()
         if not main_path: return
-
         subfolders = sorted([d for d in os.listdir(main_path) if os.path.isdir(os.path.join(main_path, d))], key=natural_sort_key)
         
         if not subfolders:
-            messagebox.showerror("錯誤", "找不到符合規範的子資料夾。")
+            CTkMessage(self, "錯誤", "找不到符合規範的子資料夾。")
             return
 
         for widget in self.scroll_frame.winfo_children(): widget.destroy()
         self.results_cache = []
+        self.global_max_diff = 0.0
+        self.global_max_lv_list = []
         overall_pass = True
-        valid_ext = ('.png', '.jpg', '.jpeg', '.bmp', '.tif')
 
         try:
             for folder_name in subfolders:
                 folder_path = os.path.join(main_path, folder_name)
-                files = sorted([os.path.join(folder_path, f) for f in os.listdir(folder_path) 
-                                if f.lower().endswith(valid_ext)], key=os.path.getmtime)
-                
+                files = sorted([os.path.join(folder_path, f) for f in os.listdir(folder_path) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.tif'))], key=os.path.getmtime)
                 if len(files) != 3: continue 
 
                 photo_details = [AEPhotoDetail(f) for f in files]
-                y_vals = [p.y_avg for p in photo_details]
-                avg_y = sum(y_vals) / 3
+                avg_y = sum(p.y_avg for p in photo_details) / 3
                 
-                diffs = []
+                # 計算與比較最大誤差
+                lv_max_diff = 0.0
                 for p in photo_details:
-                    d = abs(p.y_avg - avg_y) / avg_y * 100 if avg_y != 0 else 0
-                    p.diff_from_avg = d
-                    diffs.append(d)
+                    p.diff_from_avg = abs(p.y_avg - avg_y) / avg_y * 100 if avg_y != 0 else 0
+                    if p.diff_from_avg > lv_max_diff:
+                        lv_max_diff = p.diff_from_avg
+
+                # 判定邏輯更新：處理多個最大值 (四捨五入到兩位進行比較)
+                rounded_lv_max = round(lv_max_diff, 2)
+                rounded_global_max = round(self.global_max_diff, 2)
+
+                if rounded_lv_max > rounded_global_max:
+                    self.global_max_diff = lv_max_diff
+                    self.global_max_lv_list = [folder_name]
+                elif rounded_lv_max == rounded_global_max and rounded_global_max > 0:
+                    if folder_name not in self.global_max_lv_list:
+                        self.global_max_lv_list.append(folder_name)
                 
-                max_diff = max(diffs)
-                status = "Pass" if max_diff <= 5.0 else "Fail"
+                status = "Pass" if lv_max_diff <= 5.0 else "Fail"
                 if status == "Fail": overall_pass = False
 
-                res_data = {
-                    "level": folder_name, "y_list": y_vals, "avg": avg_y, 
-                    "max_diff": max_diff, "status": status, "photos": photo_details
-                }
+                res_data = {"level": folder_name, "y_list": [p.y_avg for p in photo_details], "avg": avg_y, "max_diff": lv_max_diff, "status": status, "photos": photo_details}
                 self.results_cache.append(res_data)
                 self.render_level_section(res_data)
 
-            self.status_lbl.configure(text="OVERALL: PASS" if overall_pass else "OVERALL: FAIL", 
-                                      text_color="#2ECC71" if overall_pass else "#E74C3C")
+            self.status_lbl.configure(text="OVERALL: PASS" if overall_pass else "OVERALL: FAIL", text_color="#2ECC71" if overall_pass else "#E74C3C")
+            
+            max_lvs = ", ".join(self.global_max_lv_list)
+            self.max_stat_lbl.configure(text=f"Max Diff: {self.global_max_diff:.2f}% @ {max_lvs}")
+            
             self.btn_copy.configure(state="normal", fg_color="#1F538D")
             self.auto_save_results(main_path, overall_pass)
             
         except Exception as e:
-            messagebox.showerror("錯誤", f"處理失敗：{str(e)}")
+            CTkMessage(self, "錯誤", f"處理失敗：{str(e)}")
 
     def auto_save_results(self, main_path, overall_pass):
         save_dir = os.path.join(main_path, "Results", "AE")
@@ -178,44 +234,39 @@ class ModernAEValidator(ctk.CTk):
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(header)
             for r in self.results_cache:
-                line = f"{r['level']}\t{r['y_list'][0]:.2f}\t{r['y_list'][1]:.2f}\t{r['y_list'][2]:.2f}\t{r['avg']:.2f}\t{r['max_diff']:.2f}%\t{r['status']}\n"
-                f.write(line)
+                f.write(f"{r['level']}\t{r['y_list'][0]:.2f}\t{r['y_list'][1]:.2f}\t{r['y_list'][2]:.2f}\t{r['avg']:.2f}\t{r['max_diff']:.2f}%\t{r['status']}\n")
+            
+            max_lvs = ", ".join(self.global_max_lv_list)
+            f.write(f"\n[Global Summary]\nGlobal Max Difference:\t{self.global_max_diff:.2f}%\tLocated in:\t{max_lvs}\n")
         
         png_path = os.path.join(save_dir, f"AE_Report_Image_{timestamp}.png")
         self.generate_long_report_image(png_path, overall_pass)
-        messagebox.showinfo("自動存檔", f"數據與長圖已儲存至：\n{save_dir}")
+        CTkMessage(self, "自動存檔", f"數據與長圖已儲存至：\n{save_dir}")
 
     def generate_long_report_image(self, save_path, overall_pass):
         width = 1100
-        row_h = 360
-        header_h = 100
+        row_h, header_h = 360, 130
         total_h = header_h + (len(self.results_cache) * row_h) + 60
         img = Image.new('RGB', (width, total_h), color=(25, 25, 25))
         draw = ImageDraw.Draw(img)
-        
-        # 繪製標題 (符合規範)
-        header_text = f"AE Tool Version : {self.version}"
+        draw.text((30, 20), f"AE Tool Version : {self.version}", fill=(255, 255, 255))
         total_status = "PASS" if overall_pass else "FAIL"
-        draw.text((30, 25), header_text, fill=(255, 255, 255))
-        draw.text((30, 55), f"Overall Result: {total_status} | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", 
-                  fill=(46, 204, 113) if overall_pass else (231, 76, 60))
+        draw.text((30, 50), f"Overall Result: {total_status} | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fill=(46, 204, 113) if overall_pass else (231, 76, 60))
+        
+        max_lvs = ", ".join(self.global_max_lv_list)
+        draw.text((30, 80), f"Global Max Difference: {self.global_max_diff:.2f}% (Found in {max_lvs})", fill=(230, 126, 34))
 
         curr_y = header_h
         for res in self.results_cache:
             draw.line([(20, curr_y), (width-20, curr_y)], fill=(80, 80, 80), width=1)
             lv_color = (46, 204, 113) if res["status"] == "Pass" else (231, 76, 60)
-            lv_text = f"Folder: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | Result: {res['status']}"
-            draw.text((30, curr_y + 15), lv_text, fill=lv_color)
-
-            labels = ["1st", "2st", "3st"]
+            draw.text((30, curr_y + 15), f"Folder: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | Result: {res['status']}", fill=lv_color)
             for i, p in enumerate(res["photos"]):
                 thumb = p.full_res_boxed.copy()
                 thumb.thumbnail((280, 210))
                 x_pos = 30 + (i * 350)
                 img.paste(thumb, (x_pos, curr_y + 50))
-                info = (f"[{labels[i]}]\nFilename: {p.filename}\nSize: {p.w}x{p.h}\nRGB: {p.rgb_avg}\nY: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%")
-                text_color = (231, 76, 60) if p.diff_from_avg > 5.0 else (200, 200, 200)
-                draw.multiline_text((x_pos, curr_y + 250), info, fill=text_color, spacing=4)
+                draw.multiline_text((x_pos, curr_y + 250), f"[{i+1}st]\nFilename: {p.filename}\nSize: {p.w}x{p.h}\nRGB: {p.rgb_avg}\nY: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%", fill=(231, 76, 60) if p.diff_from_avg > 5.0 else (200, 200, 200), spacing=4)
             curr_y += row_h
         img.save(save_path)
 
@@ -223,8 +274,8 @@ class ModernAEValidator(ctk.CTk):
         color = "#2ECC71" if res["status"] == "Pass" else "#E74C3C"
         f = ctk.CTkFrame(self.scroll_frame, border_width=1, border_color="#444444")
         f.pack(fill="x", pady=15, padx=10)
-        ctk.CTkLabel(f, text=f"Level: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | {res['status']}", 
-                     text_color=color, font=ctk.CTkFont(weight="bold")).pack(pady=10, padx=15, anchor="w")
+        ctk.CTkLabel(f, text=f"Level: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | {res['status']}", text_color=color, font=ctk.CTkFont(weight="bold")).pack(pady=10, padx=15, anchor="w")
+        
         row_f = ctk.CTkFrame(f, fg_color="transparent")
         row_f.pack(fill="x", padx=10, pady=5)
         labels = ["1st", "2st", "3st"]
@@ -233,14 +284,14 @@ class ModernAEValidator(ctk.CTk):
             card.pack(side="left", padx=10, pady=10, expand=True, fill="both")
             ctk.CTkLabel(card, image=p.preview_tk, text="").pack(pady=10)
             txt = f"【{labels[i]}】\n檔名: {p.filename}\n尺寸: {p.w}x{p.h}\nRGB Avg: {p.rgb_avg}\nY Avg: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%"
-            ctk.CTkLabel(card, text=txt, justify="left", font=ctk.CTkFont(size=11), 
-                         text_color="#E74C3C" if p.diff_from_avg > 5.0 else "#D5D8DC").pack(pady=8, padx=12)
+            ctk.CTkLabel(card, text=txt, justify="left", font=ctk.CTkFont(size=11), text_color="#E74C3C" if p.diff_from_avg > 5.0 else "#D5D8DC").pack(pady=8, padx=12)
 
     def copy_to_clipboard(self):
         h = "Level\t1st\t2st\t3st\tAvg\tMax Diff\tResult\n"
         rows = [f"{r['level']}\t{r['y_list'][0]:.2f}\t{r['y_list'][1]:.2f}\t{r['y_list'][2]:.2f}\t{r['avg']:.2f}\t{r['max_diff']:.2f}%\t{r['status']}" for r in self.results_cache]
-        pyperclip.copy(h + "\n".join(rows))
-        messagebox.showinfo("成功", "數據已成功複製至剪貼簿。")
+        max_lvs = ", ".join(self.global_max_lv_list)
+        pyperclip.copy(h + "\n".join(rows) + f"\nGlobal Max Difference:\t{self.global_max_diff:.2f}%\t@ {max_lvs}")
+        CTkMessage(self, "成功", "數據已成功複製至剪貼簿。")
 
 if __name__ == "__main__":
     app = ModernAEValidator()
