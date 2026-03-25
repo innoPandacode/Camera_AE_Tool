@@ -200,7 +200,7 @@ class ModernAEValidator(ctk.CTk):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         txt_path = os.path.join(save_dir, f"AE_Report_Data_{timestamp}.txt")
         with open(txt_path, "w", encoding="utf-8") as f:
-            f.write("Level\t1st\t2st\t3st\tAvg\tMax Diff\tResult\n")
+            f.write("Level\t1st\t2nd\t3rd\tAvg\tMax Diff\tResult\n")
             for r in self.results_cache:
                 if r["status"] == "Skip":
                     f.write(f"{r['level']}\t--\t--\t--\t--\t--\t{r['error']}\n")
@@ -211,26 +211,63 @@ class ModernAEValidator(ctk.CTk):
         CTkMessage(self, "自動存檔", f"數據與長圖已儲存至：\n{save_dir}")
 
     def generate_long_report_image(self, save_path, overall_pass):
-        width, row_h, header_h = 1100, 360, 130
-        img = Image.new('RGB', (width, header_h + (len(self.results_cache) * row_h) + 60), color=(25, 25, 25))
-        draw = ImageDraw.Draw(img)
-        draw.text((30, 20), f"AE Tool Version : {self.version}", fill=(255, 255, 255))
-        draw.text((30, 50), f"Overall Result: {'PASS' if overall_pass else 'FAIL/WARN'} | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fill=(46, 204, 113) if overall_pass else (231, 76, 60))
-        draw.text((30, 80), f"Global Max Difference: {self.global_max_diff:.2f}% (Found in {', '.join(self.global_max_lv_list)})", fill=(230, 126, 34))
-        curr_y = header_h
-        for res in self.results_cache:
-            draw.line([(20, curr_y), (width-20, curr_y)], fill=(80, 80, 80), width=1)
-            if res["status"] == "Skip":
-                draw.text((30, curr_y + 15), f"Level: {res['level']} | {res['error']}", fill=(241, 196, 15))
-            else:
-                lv_color = (46, 204, 113) if res["status"] == "Pass" else (231, 76, 60)
-                draw.text((30, curr_y + 15), f"Level: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | Result: {res['status']}", fill=lv_color)
-                for i, p in enumerate(res["photos"]):
-                    thumb = p.full_res_boxed.copy(); thumb.thumbnail((280, 210))
-                    img.paste(thumb, (30 + (i * 350), curr_y + 50))
-                    draw.multiline_text((30 + (i * 350), curr_y + 250), f"[{i+1}st]\nFilename: {p.filename}\nSize: {p.w}x{p.h}\nRGB: {p.rgb_avg}\nY: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%", fill=(231, 76, 60) if p.diff_from_avg > 5.0 else (200, 200, 200), spacing=4)
-            curr_y += row_h
-        img.save(save_path)
+            # 稍微增加 row_h 以確保文字不會超出底線 (360 -> 420)
+            width, row_h, header_h = 1100, 420, 130
+            img = Image.new('RGB', (width, header_h + (len(self.results_cache) * row_h) + 60), color=(25, 25, 25))
+            draw = ImageDraw.Draw(img)
+            
+            # 標題與全局資訊
+            draw.text((30, 20), f"AE Tool Version : {self.version}", fill=(255, 255, 255))
+            draw.text((30, 50), f"Overall Result: {'PASS' if overall_pass else 'FAIL/WARN'} | Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", fill=(46, 204, 113) if overall_pass else (231, 76, 60))
+            draw.text((30, 80), f"Global Max Difference: {self.global_max_diff:.2f}% (Found in {', '.join(self.global_max_lv_list)})", fill=(230, 126, 34))
+            
+            curr_y = header_h
+            ordinals = ["1st", "2nd", "3rd"] # 統一序數定義
+
+            for res in self.results_cache:
+                draw.line([(20, curr_y), (width-20, curr_y)], fill=(80, 80, 80), width=1)
+                
+                if res["status"] == "Skip":
+                    draw.text((30, curr_y + 15), f"Level: {res['level']} | {res['error']}", fill=(241, 196, 15))
+                else:
+                    lv_color = (46, 204, 113) if res["status"] == "Pass" else (231, 76, 60)
+                    draw.text((30, curr_y + 15), f"Level: {res['level']} | Avg Y: {res['avg']:.2f} | Max Diff: {res['max_diff']:.2f}% | Result: {res['status']}", fill=lv_color)
+                    
+                    # 處理三張一組的照片
+                    for i, p in enumerate(res["photos"]):
+                        # 縮放圖片並取得實際尺寸
+                        thumb = p.full_res_boxed.copy()
+                        thumb.thumbnail((280, 210))
+                        tw, th = thumb.size # tw: 寬度, th: 高度
+                        
+                        # 計算圖片貼上座標
+                        img_x = 30 + (i * 350)
+                        img_y = curr_y + 50
+                        img.paste(thumb, (img_x, img_y))
+                        
+                        # 核心修正：文字位置根據圖片實際高度 th 動態計算，並修正序數
+                        text_y = img_y + th + 10 # 圖片底部下方 10 像素
+                        ordinal_label = ordinals[i] if i < 3 else f"[{i+1}th]"
+                        
+                        text_content = (
+                            f"[{ordinal_label}]\n"
+                            f"Filename: {p.filename}\n"
+                            f"Size: {p.w}x{p.h}\n"
+                            f"RGB: {p.rgb_avg}\n"
+                            f"Y: {p.y_avg:.2f}\n"
+                            f"Diff: {p.diff_from_avg:.2f}%"
+                        )
+                        
+                        draw.multiline_text(
+                            (img_x, text_y), 
+                            text_content, 
+                            fill=(231, 76, 60) if p.diff_from_avg > 5.0 else (200, 200, 200), 
+                            spacing=4
+                        )
+                
+                curr_y += row_h
+            
+            img.save(save_path)
 
     def render_level_section(self, res):
         if res["status"] == "Skip":
@@ -247,11 +284,11 @@ class ModernAEValidator(ctk.CTk):
                 card = ctk.CTkFrame(row_f, fg_color="#2B2B2B", border_width=1 if p.diff_from_avg > 5.0 else 0, border_color="#E74C3C")
                 card.pack(side="left", padx=10, pady=10, expand=True, fill="both")
                 ctk.CTkLabel(card, image=p.preview_tk, text="").pack(pady=10)
-                txt = f"【{['1st','2st','3st'][i]}】\n檔名: {p.filename}\n尺寸: {p.w}x{p.h}\nRGB Avg: {p.rgb_avg}\nY Avg: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%"
+                txt = f"【{['1st','2nd','3rd'][i]}】\n檔名: {p.filename}\n尺寸: {p.w}x{p.h}\nRGB Avg: {p.rgb_avg}\nY Avg: {p.y_avg:.2f}\nDiff: {p.diff_from_avg:.2f}%"
                 ctk.CTkLabel(card, text=txt, justify="left", font=ctk.CTkFont(size=11), text_color="#E74C3C" if p.diff_from_avg > 5.0 else "#D5D8DC").pack(pady=8, padx=12)
 
     def copy_to_clipboard(self):
-        h = "Level\t1st\t2st\t3st\tAvg\tMax Diff\tResult\n"
+        h = "Level\t1st\t2nd\t3rd\tAvg\tMax Diff\tResult\n"
         rows = []
         for r in self.results_cache:
             if r["status"] == "Skip": rows.append(f"{r['level']}\t--\t--\t--\t--\t--\t{r['error']}")
